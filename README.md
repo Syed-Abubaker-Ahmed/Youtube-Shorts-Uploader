@@ -350,5 +350,5 @@ SELECT COUNT(*) FROM video_ideas WHERE used = 0;
 
 ---
 
-**Status**: ✅ Production Ready | **Version**: 1.0 | **Python**: 3.8+ 
+**Status**: ✅ Production Ready | **Version**: 1.0 | **Python**: 3.8+ |
 See product on https://www.youtube.com/@AutomationSparkys
