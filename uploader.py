@@ -52,6 +52,27 @@ class UploadScheduler:
             )
         )
 
+    def _get_active_series_id(self) -> Optional[str]:
+        """
+        Returns the current active series_id that is not yet finished.
+        A series is finished when it reaches SERIES_TARGET_COUNT uploads.
+        """
+        uploads = self.db.get_all_uploads()
+
+        series_uploaded_counts = {}
+
+        for u in uploads:
+            if u.status == "uploaded" and not u.is_compilation:
+                series_uploaded_counts[u.series_id] = (
+                    series_uploaded_counts.get(u.series_id, 0) + 1
+                )
+
+        for series_id, count in series_uploaded_counts.items():
+            if count < self.orchestrator.SERIES_TARGET_COUNT:
+                return series_id
+
+        return None
+
     # ------------------------------------------------------------------
     # Scheduling
     # ------------------------------------------------------------------
@@ -106,12 +127,18 @@ class UploadScheduler:
 
         now = datetime.now(UTC)
         uploads = self.db.get_all_uploads()
+        active_series = self._get_active_series_id()
 
         due = [
             u for u in uploads
             if u.status in ("pending", "failed")
             and u.scheduled_time <= now
+            and (
+                active_series is None
+                or u.series_id == active_series
+            )
         ]
+
 
         logger.info(f"{len(due)} uploads ready for execution")
         return due
@@ -230,31 +257,27 @@ class UploadScheduler:
     def _mark_failed(self, upload_job: UploadJob, error: str) -> bool:
         # 🚫 HARD STOP ON QUOTA
         if "quotaExceeded" in error:
-            logger.critical(
-                "🚫 YOUTUBE DAILY QUOTA EXCEEDED — SYSTEM HALTED"
-            )
+            logger.critical("🚫 YOUTUBE DAILY QUOTA EXCEEDED — SYSTEM HALTED")
             self.quota_exceeded = True
 
             upload_job.status = "failed"
             upload_job.error_message = "quotaExceeded"
             upload_job.uploaded_at = datetime.now(UTC)
 
-            self.db.save_upload_job(upload_job)
-            return False
+            return self.db.save_upload_job(upload_job)
 
+        # 🔁 IMMEDIATE RETRY
         upload_job.status = "failed"
         upload_job.error_message = error
-
-        # 🔁 retry later
-        upload_job.scheduled_time = (
-            datetime.now(UTC) + self._random_delay()
-        )
+        upload_job.scheduled_time = datetime.now(UTC)
 
         logger.error(
             f"Upload failed [{upload_job.upload_id}]: {error} "
-            f"(retry scheduled)"
+            f"(immediate retry)"
         )
+
         return self.db.save_upload_job(upload_job)
+
 
     # ------------------------------------------------------------------
     # Monitoring
